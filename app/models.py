@@ -1,16 +1,32 @@
 from sqlalchemy import (
-    Column,
-    String,
-    Text,
-    BigInteger,
-    Date,
     TIMESTAMP,
+    BigInteger,
+    Column,
+    Date,
     ForeignKey,
     SmallInteger,
+    String,
+    Text,
 )
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
+
 from .shbkp import Base
+
+
+class UploaderConfig(Base):
+    __tablename__ = "uploader_config"
+    id = Column(String(40), primary_key=True)
+    created_at = Column(TIMESTAMP, nullable=False, default=func.now())
+    aws_bucket_name = Column(String(64), nullable=True)
+    aws_bucket_region = Column(String(50), nullable=True)
+    aws_access_key = Column(String(25), nullable=True)
+    aws_secret_key = Column(String(45), nullable=True)
+    total_quota = Column(BigInteger, nullable=True, default=(5 * 1024 * 1024 * 1024))
+    default_quota = Column(BigInteger, nullable=True, default=(250 * 1024 * 1024))
+    is_active = Column(
+        SmallInteger, nullable=False, default=0, index=True
+    )  # 0 - Active, 1 - InActive
 
 
 class Company(Base):

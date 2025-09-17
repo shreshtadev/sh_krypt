@@ -1,5 +1,6 @@
-from pydantic import BaseModel, Field
 from datetime import datetime
+
+from pydantic import BaseModel, Field
 
 
 # A base model for common company fields (no change here)
@@ -53,6 +54,24 @@ class FileMetaBase(BaseModel):
 
 
 class FileMetaOut(FileMetaBase):
+    id: str
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class UploaderConfigBase(BaseModel):
+    total_quota: int | None = None
+    default_quota: int | None = None
+    aws_bucket_name: str | None = None
+    aws_bucket_region: str | None = None
+    aws_access_key: str | None = None
+    aws_secret_key: str | None = None
+    is_active: int = 1
+
+
+class UploaderConfigOut(UploaderConfigBase):
     id: str
     created_at: datetime
 
