@@ -5,10 +5,10 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "Python Debugger: Current File",
+      "name": "ShKrypt Server",
       "type": "debugpy",
       "request": "launch",
-      "program": "${file}",
+      "program": "${cwd}/main.py",
       "console": "integratedTerminal"
     }
   ]

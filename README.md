@@ -77,7 +77,6 @@ Registers a new company.
     ```json
     {
       "company_name": "string",
-      "local_folder_path": "string",
       "total_usage_quota": 0,
       "used_quota": 0,
       "aws_bucket_name": "string",
@@ -92,7 +91,6 @@ Registers a new company.
     ```json
     {
       "company_name": "string",
-      "local_folder_path": "string",
       "start_date": "2025-09-15T15:30:00Z",
       "end_date": "2026-09-15T15:30:00Z",
       "total_usage_quota": 0,

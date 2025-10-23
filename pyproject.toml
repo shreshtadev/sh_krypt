@@ -1,14 +1,41 @@
 [project]
 name = "sh-krypt"
 version = "0.1.0"
-description = "Add your description here"
+description = "Shreshta Services for s3 file management"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "argon2-cffi>=25.1.0",
+    "boto3>=1.40.33",
     "fastapi>=0.116.1",
-    "pydantic>=2.11.7",
+    "itsdangerous>=2.2.0",
+    "passlib[bcrypt]>=1.7.4",
+    "pydantic[email]>=2.11.7",
     "pymysql>=1.1.2",
     "python-dotenv>=1.1.1",
+    "python-jose[cryptography]>=3.5.0",
+    "python-multipart>=0.0.20",
+    "python-slugify>=8.0.4",
     "sqlalchemy>=2.0.43",
     "uvicorn[standard]>=0.35.0",
 ]
+
+[dependency-groups]
+dev = [
+    "debugpy>=1.8.17",
+    "pyright>=1.1.406",
+    "ruff>=0.14.1",
+]
+
+[tool.ruff]
+line-length = 88
+target-version = "py313"
+exclude = ['.venv', 'node_modules']
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I"]
+ignore = ["E501"] # Optional: Ignore line length check
+
+[tool.ruff.format]
+quote-style = "single"
+indent-style = "space"
