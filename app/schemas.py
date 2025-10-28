@@ -18,12 +18,6 @@ class CompanyBase(BaseModel):
 
 class CompanyRegister(BaseModel):
     company_name: str = Field(..., description='Name of the company.')
-    total_usage_quota: int = 250 * 1024 * 1024
-    used_quota: int = 0
-    aws_bucket_name: str
-    aws_bucket_region: str
-    aws_access_key: str
-    aws_secret_key: str
 
 
 class CompanyOut(CompanyBase):
@@ -100,3 +94,13 @@ class PresignedURLRequest(BaseModel):
 
 class FileDeleteRequest(BaseModel):
     loc_tag: str
+
+
+class AdminClientRequest(BaseModel):
+    client_id: str
+    client_secret: str
+
+
+class AdminClientResponse(BaseModel):
+    client_id: str
+    message: str | None = None

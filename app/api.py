@@ -6,7 +6,7 @@ from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse
 
 from app.config import IS_DEBUG
-from app.routes import company, filemeta
+from app.routes import auth, company, filemeta
 
 # Import the SQLAlchemy models and Pydantic schemas
 from . import models
@@ -21,6 +21,7 @@ app = (
     else FastAPI(docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
 )
 app.add_middleware(CorrelationIdMiddleware)  # type: ignore
+app.include_router(auth.router)
 app.include_router(company.router)
 app.include_router(filemeta.router)
 

@@ -1,7 +1,9 @@
 import mimetypes
+import uuid
 from datetime import datetime
 
 from botocore.exceptions import ClientError
+from dateutil.relativedelta import relativedelta
 from fastapi import (
     APIRouter,
     Depends,
@@ -10,22 +12,92 @@ from fastapi import (
 )
 from fastapi.requests import Request
 from fastapi.responses import JSONResponse, Response
+from slugify import slugify
+from sqlalchemy import and_, select
 from sqlalchemy.orm import Session
 from types_boto3_s3 import S3Client
 
 from app.logging import logger
+from app.models import Company, UploaderConfig, get_db
 from app.schemas import (
     CompanyOut,
     CompanyQuotaUpdate,
+    CompanyRegister,
     FileDeleteRequest,
     PresignedURLRequest,
 )
-from app.shbkp import get_company_by_api_key, get_db, get_s3_client
+from app.shbkp import (
+    get_company_by_api_key,
+    get_s3_client,
+    hash_secret,
+    oauth2_scheme,
+)
 
 router = APIRouter(prefix='/api/companies', tags=['company'])
 # ---------------------------------------------------------------------
 # API Endpoints
 # ---------------------------------------------------------------------
+
+
+def is_valid_company(company_name: str, db: Session):
+    found_company_exists = (
+        select(Company.id)
+        .where(
+            and_(
+                Company.company_name == company_name,
+                Company.company_slug == slugify(company_name),
+            )
+        )
+        .limit(1)
+    )
+    found_company = db.scalar(found_company_exists)
+    return found_company is not None
+
+
+@router.post('/register')
+async def register_company(
+    request: Request,
+    registration_request: CompanyRegister,
+    token: str = Depends(oauth2_scheme),
+    db: Session = Depends(get_db),
+):
+    found_company = is_valid_company(registration_request.company_name, db)
+    if not found_company:
+        err = dict()
+        err['detail'] = 'Company already exists'
+        return JSONResponse(status_code=status.HTTP_409_CONFLICT, content=err)
+    company_api_key = f'shbkp_{hash_secret(str(uuid.uuid4()).replace("-", ""))}'
+    current_date = datetime.now()
+    end_date = current_date + relativedelta(years=1)
+    found_aws_config = (
+        db.query(UploaderConfig).where(UploaderConfig.is_active == 1).first()
+    )
+    if not found_aws_config:
+        err = dict()
+        err['detail'] = 'Active AWS Config is not found'
+        return JSONResponse(status_code=status.HTTP_404_NOT_FOUND, content=err)
+    company = Company(
+        id=str(uuid.uuid4()),
+        company_name=registration_request.company_name,
+        company_slug=slugify(registration_request.company_name),
+        company_api_key=company_api_key,
+        total_usage_quota=found_aws_config.default_quota,
+        usage_quota=0,
+        start_date=current_date,
+        end_date=end_date,
+        aws_bucket_name=found_aws_config.aws_bucket_name,
+        aws_bucket_region=found_aws_config.aws_bucket_region,
+        aws_access_key=found_aws_config.aws_access_key,
+        aws_secret_key=found_aws_config.aws_secret_key,
+        base_url=request.base_url,
+    )
+    db.add(company)
+    db.commit()
+    db.refresh(company)
+    return JSONResponse(
+        content={'company_api_key': company_api_key, 'base_url': request.base_url},
+        status_code=status.HTTP_201_CREATED,
+    )
 
 
 # 1. API to find a company by its API key

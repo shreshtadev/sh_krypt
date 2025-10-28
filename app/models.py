@@ -63,7 +63,7 @@ class Company(Base):
     created_at = Column(TIMESTAMP, nullable=False, default=func.now())
     company_name = Column(String(144), nullable=False)
     company_slug = Column(String(255), nullable=False)
-    company_api_key = Column(String(255), nullable=False)
+    company_api_key = Column(String(255), index=True, nullable=False)
     start_date = Column(Date, nullable=True)
     end_date = Column(Date, nullable=True)
     total_usage_quota = Column(BigInteger, nullable=True)
@@ -82,12 +82,25 @@ class FileMeta(Base):
     created_at = Column(TIMESTAMP, nullable=False, default=func.now())
     file_name = Column(String(255), nullable=True)
     file_size = Column(BigInteger, nullable=False, default=0)
-    file_key = Column(String(255), nullable=False)
+    file_key = Column(String(255), index=True, nullable=False)
     file_txn_type = Column(SmallInteger, nullable=False, default=1)
     file_txn_meta = Column(String(255), nullable=True)
 
     # Foreign Key
     company_id = Column(String(40), ForeignKey('companies.id'))
+
+
+class AdminClient(Base):
+    __tablename__ = 'admin_clients'
+    id = Column(BigInteger, primary_key=True)
+    client_id = Column(String(65), unique=True, index=True, nullable=False)
+    hashed_secret = Column(String(255), nullable=False)
+
+
+class CompanyAdmin(Base):
+    __tablename__ = 'companies_admins'
+    client_id = Column(String(65), nullable=False, primary_key=True)
+    company_slug = Column(String(255), nullable=False, primary_key=True)
 
 
 # Dependency to get a database session for each request
