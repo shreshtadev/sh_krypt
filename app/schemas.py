@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, Field
 
 
 # A base model for common company fields (no change here)
@@ -16,7 +16,6 @@ class CompanyBase(BaseModel):
     aws_secret_key: str | None = None
 
 
-# New schema for the registration API endpoint (no more API key or dates)
 class CompanyRegister(BaseModel):
     company_name: str = Field(..., description='Name of the company.')
     total_usage_quota: int = 250 * 1024 * 1024
@@ -27,18 +26,17 @@ class CompanyRegister(BaseModel):
     aws_secret_key: str
 
 
-# Output model for a company (no change here)
 class CompanyOut(CompanyBase):
     id: str
     created_at: datetime
     company_api_key: str
+    company_slug: str
     base_url: str
 
     class Config:
         from_attributes = True
 
 
-# Pydantic models for other endpoints (as before)
 class CompanyQuotaUpdate(BaseModel):
     used_quota: int | None = None
     file_txn_type: int = 1  # 1 for upload, 2 for delete
@@ -78,37 +76,6 @@ class UploaderConfigOut(UploaderConfigBase):
         from_attributes = True
 
 
-class UserCreate(BaseModel):
-    username: str
-    email: EmailStr
-    password: str
-
-
-class UserResponse(BaseModel):
-    id: str
-    username: str
-    email: str
-    is_active: bool
-
-    class Config:
-        from_attributes = True
-
-
-class LoginResponse(BaseModel):
-    access_token: str
-    token_type: str
-    expires_at: int
-
-    class Config:
-        from_attributes = True
-
-
-class CurrentUser(BaseModel):
-    username: str
-    email: str
-    is_active: bool
-
-
 class AWSConfig(BaseModel):
     access_key_id: str
     secret_access_key: str
@@ -125,5 +92,11 @@ class ErrorResponse(BaseModel):
 
 
 class PresignedURLRequest(BaseModel):
+    loc_tag: str
     file_name: str
-    content_type: str
+    content_type: str | None = None
+    content_size: int
+
+
+class FileDeleteRequest(BaseModel):
+    loc_tag: str

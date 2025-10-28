@@ -1,76 +1,33 @@
 import logging
-import os
-import sys
-from logging.config import dictConfig
 
+# Removed: queue, QueueListener, RotatingFileHandler, ProcessorFormatter
 from fastapi import FastAPI
 from fastapi.concurrency import asynccontextmanager
+from pythonjsonlogger.json import JsonFormatter
 
-# Define a logger for your application
-logger = logging.getLogger('shkrypts')
+from app.config import IS_DEBUG
+
+logger = logging.getLogger(__name__)
 
 
 def setup_logging():
-    """Configures logging for the application based on the environment."""
-    log_config_dev = {
-        'version': 1,
-        'disable_existing_loggers': False,
-        'formatters': {
-            'default': {
-                'format': '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-                'datefmt': '%Y-%m-%d %H:%M:%S',
-            },
-        },
-        'handlers': {
-            'console': {
-                'class': 'logging.StreamHandler',
-                'formatter': 'default',
-                'stream': sys.stdout,
-            },
-        },
-        'root': {
-            'level': 'DEBUG',
-            'handlers': ['console'],
-        },
-    }
-
-    log_config_prod = {
-        'version': 1,
-        'disable_existing_loggers': False,
-        'formatters': {
-            'default': {
-                'format': '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-                'datefmt': '%Y-%m-%d %H:%M:%S',
-            },
-        },
-        'handlers': {
-            'file': {
-                'class': 'logging.handlers.RotatingFileHandler',
-                'formatter': 'default',
-                'filename': 'app.log',
-                'maxBytes': 5000000,  # 5 MB
-                'backupCount': 5,
-            },
-        },
-        'root': {
-            'level': 'INFO',
-            'handlers': ['file'],
-        },
-    }
-
-    # Use an environment variable to switch between configurations
-    if bool(os.getenv('IS_DEBUG', 'True')):
-        dictConfig(log_config_prod)
-        logger.info('Configured persistent logger.')
+    if not IS_DEBUG:
+        logger.setLevel(logging.INFO)
     else:
-        dictConfig(log_config_dev)
-        logger.info('Configured console logger.')
+        logger.setLevel(logging.DEBUG)
+
+    log_handler = logging.StreamHandler()
+    formatter = JsonFormatter(
+        '%(asctime)s %(levelname)s %(name)s %(message)s %(correlation_id)s'
+    )
+    log_handler.setFormatter(formatter)
+
+    logger.addHandler(log_handler)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # This block runs at startup
-    setup_logging()  # Set up the console or file logger
+    setup_logging()
     logger.info('Application is starting up.')
-    yield  # The application will now handle requests
+    yield
     logger.info('Application is shutting down.')

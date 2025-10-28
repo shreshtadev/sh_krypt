@@ -1,45 +1,45 @@
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.ext.declarative import declarative_base
+from typing import Annotated
 
-from app.config import (
-    DATABASE_HOST,
-    DATABASE_NAME,
-    DATABASE_PASSWORD,
-    DATABASE_PORT,
-    DATABASE_USER,
-)
+from boto3 import client
+from fastapi import Depends, Header, HTTPException, status
+from sqlalchemy.orm import Session
 
+from app.models import Company, get_db
+from app.schemas import CompanyOut
 
 # You would typically get these from a .env file
 # (e.g., using python-dotenv library)
 
 
-if not any(
-    [DATABASE_USER, DATABASE_PASSWORD, DATABASE_HOST, DATABASE_PORT, DATABASE_NAME]
+def get_company_by_api_key(
+    company_api_key: Annotated[str | None, Header(alias='X-Company-Api-Key')],
+    db: Session = Depends(get_db),
 ):
-    raise ValueError("Database configuration are not set properly.")
+    if not company_api_key:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='Company API key header is required',
+        )
+    company = (
+        db.query(Company).filter(Company.company_api_key == company_api_key).first()
+    )
 
-# The database URL for SQLAlchemy
-SQLALCHEMY_DATABASE_URL = (
-    f"mariadb+pymysql://{DATABASE_USER}:{DATABASE_PASSWORD}"
-    f"@{DATABASE_HOST}:{DATABASE_PORT}/{DATABASE_NAME}"
-)
+    if not company:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail='Company not found'
+        )
 
-# Create a SQLAlchemy engine
-engine = create_engine(SQLALCHEMY_DATABASE_URL)
-
-# Create a SessionLocal class
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-
-# Create a Base class for our models
-Base = declarative_base()
+    yield company
 
 
-# Dependency to get a database session for each request
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+def get_s3_client(company: CompanyOut = Depends(get_company_by_api_key)):
+    aws_access_key = company.aws_access_key
+    aws_secret_key = company.aws_secret_key
+    aws_bucket_region = company.aws_bucket_region
+    s3_client = client(
+        's3',
+        aws_access_key_id=aws_access_key,
+        aws_secret_access_key=aws_secret_key,
+        region_name=aws_bucket_region,
+    )
+    yield s3_client

@@ -1,30 +1,29 @@
 [project]
 name = "sh-krypt"
-version = "0.1.0"
+version = "0.1.3"
 description = "Shreshta Services for s3 file management"
 readme = "README.md"
-requires-python = ">=3.13"
+requires-python = ">=3.14"
 dependencies = [
-    "argon2-cffi>=25.1.0",
-    "boto3>=1.40.33",
-    "fastapi>=0.116.1",
-    "itsdangerous>=2.2.0",
-    "passlib[bcrypt]>=1.7.4",
-    "pydantic[email]>=2.11.7",
+    "asgi-correlation-id>=4.3.4",
+    "boto3>=1.40.59",
+    "fastapi[standard]>=0.120.0",
+    "pydantic[email]>=2.12.3",
     "pymysql>=1.1.2",
     "python-dotenv>=1.1.1",
-    "python-jose[cryptography]>=3.5.0",
+    "python-json-logger>=4.0.0",
     "python-multipart>=0.0.20",
     "python-slugify>=8.0.4",
-    "sqlalchemy>=2.0.43",
-    "uvicorn[standard]>=0.35.0",
+    "sqlalchemy>=2.0.44",
+    "uvicorn[standard]>=0.38.0",
 ]
 
 [dependency-groups]
 dev = [
+    "basedpyright>=1.32.1",
     "debugpy>=1.8.17",
-    "pyright>=1.1.406",
     "ruff>=0.14.1",
+    "types-boto3[s3]>=1.40.59",
 ]
 
 [tool.ruff]

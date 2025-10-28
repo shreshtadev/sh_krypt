@@ -1,35 +1,48 @@
 from sqlalchemy import (
     TIMESTAMP,
     BigInteger,
-    Boolean,
     Column,
     Date,
     ForeignKey,
     SmallInteger,
     String,
+    create_engine,
 )
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker
 from sqlalchemy.sql import func
 
-from .shbkp import Base
+from app.config import (
+    DATABASE_HOST,
+    DATABASE_NAME,
+    DATABASE_PASSWORD,
+    DATABASE_PORT,
+    DATABASE_USER,
+)
 
+if not any(
+    [DATABASE_USER, DATABASE_PASSWORD, DATABASE_HOST, DATABASE_PORT, DATABASE_NAME]
+):
+    raise ValueError('Database configuration are not set properly.')
 
-class User(Base):
-    __tablename__ = "users"
+# The database URL for SQLAlchemy
+SQLALCHEMY_DATABASE_URL = (
+    f'mariadb+pymysql://{DATABASE_USER}:{DATABASE_PASSWORD}'
+    f'@{DATABASE_HOST}:{DATABASE_PORT}/{DATABASE_NAME}'
+)
 
-    id = Column(String(40), primary_key=True)
-    username = Column(String(50), unique=True, nullable=False)
-    email = Column(String(255), unique=True, nullable=False)
-    password_hash = Column(String(255), nullable=False)
-    is_active = Column(Boolean, default=False)
-    created_at = Column(TIMESTAMP, nullable=False, default=func.now())
-    last_login_at = Column(TIMESTAMP, nullable=True, default=func.now())
+# Create a SQLAlchemy engine
+engine = create_engine(SQLALCHEMY_DATABASE_URL)
 
-    def __repr__(self):
-        return f"<User(username='{self.username}', email='{self.email}')>"
+# Create a SessionLocal class
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+# Create a Base class for our models
+Base = declarative_base()
 
 
 class UploaderConfig(Base):
-    __tablename__ = "uploader_config"
+    __tablename__ = 'uploader_config'
     id = Column(String(40), primary_key=True)
     created_at = Column(TIMESTAMP, nullable=False, default=func.now())
     aws_bucket_name = Column(String(64), nullable=False)
@@ -44,7 +57,7 @@ class UploaderConfig(Base):
 
 
 class Company(Base):
-    __tablename__ = "companies"
+    __tablename__ = 'companies'
 
     id = Column(String(40), primary_key=True)
     created_at = Column(TIMESTAMP, nullable=False, default=func.now())
@@ -62,16 +75,8 @@ class Company(Base):
     base_url = Column(String(255), nullable=True)
 
 
-class RegistrationToken(Base):
-    __tablename__ = "registration_tokens"
-    token = Column(String(255), primary_key=True)
-    created_at = Column(TIMESTAMP, nullable=False, default=func.now())
-    expires_at = Column(TIMESTAMP, nullable=False)
-    company_id = Column(String(40), ForeignKey("companies.id"), nullable=True)
-
-
 class FileMeta(Base):
-    __tablename__ = "files_meta"
+    __tablename__ = 'files_meta'
 
     id = Column(String(40), primary_key=True)
     created_at = Column(TIMESTAMP, nullable=False, default=func.now())
@@ -82,4 +87,13 @@ class FileMeta(Base):
     file_txn_meta = Column(String(255), nullable=True)
 
     # Foreign Key
-    company_id = Column(String(40), ForeignKey("companies.id"))
+    company_id = Column(String(40), ForeignKey('companies.id'))
+
+
+# Dependency to get a database session for each request
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()

@@ -1,336 +1,263 @@
-import secrets
-import string
-import uuid
-from datetime import date, datetime, timedelta
-from typing import Annotated
+import mimetypes
+from datetime import datetime
 
-from boto3 import client
 from botocore.exceptions import ClientError
 from fastapi import (
     APIRouter,
-    BackgroundTasks,
     Depends,
-    Form,
-    Header,
     HTTPException,
-    Request,
     status,
 )
-from itsdangerous.url_safe import URLSafeTimedSerializer
-from slugify import slugify
-from sqlalchemy import and_, or_
+from fastapi.requests import Request
+from fastapi.responses import JSONResponse, Response
 from sqlalchemy.orm import Session
+from types_boto3_s3 import S3Client
 
-# Import the SQLAlchemy models and Pydantic schemas
-from app.config import SECRET_KEY
-from app.models import Company, RegistrationToken, UploaderConfig
+from app.logging import logger
 from app.schemas import (
     CompanyOut,
     CompanyQuotaUpdate,
-    CompanyRegister,
+    FileDeleteRequest,
     PresignedURLRequest,
 )
-from app.shbkp import get_db
-from app.utils import (
-    get_api_key_file,
-    get_bucket_size,
-)
+from app.shbkp import get_company_by_api_key, get_db, get_s3_client
 
-router = APIRouter(prefix='/companies', tags=['company'])
-
+router = APIRouter(prefix='/api/companies', tags=['company'])
 # ---------------------------------------------------------------------
 # API Endpoints
 # ---------------------------------------------------------------------
 
 
 # 1. API to find a company by its API key
-@router.get('/api/by-api-key', response_model=CompanyOut)
+@router.get('/by-api-key', response_model=CompanyOut)
 async def find_company_by_api_key(
-    company_api_key: Annotated[str | None, Header(convert_underscores=False)],
-    db: Session = Depends(get_db),
+    company: CompanyOut = Depends(get_company_by_api_key),
 ):
     """
     Find a company by its unique API key.
     """
-    if not company_api_key:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail='Company API key header is required',
-        )
-    company = (
-        db.query(Company).filter(Company.company_api_key == company_api_key).first()
-    )
-
-    if not company:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail='Company not found'
-        )
-
     return company
 
 
-@router.patch('/api/quota', response_model=CompanyOut)
+@router.get('/quota/is-available')
+async def is_company_quota_available(
+    company: CompanyOut = Depends(get_company_by_api_key),
+):
+    if not company.total_usage_quota or not company.used_quota:
+        err = dict()
+        err['detail'] = 'Company quota is invalid'
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content=err,
+        )
+    return {
+        'is_available': company.total_usage_quota > company.used_quota,
+        'usage_quota': company.used_quota,
+    }
+
+
+@router.patch('/quota', response_model=CompanyOut)
 async def update_company_quota(
-    company_api_key: Annotated[str | None, Header(convert_underscores=False)],
     quota_update: CompanyQuotaUpdate,
+    company: CompanyOut = Depends(get_company_by_api_key),
     db: Session = Depends(get_db),
 ):
     """
     Update the total and/or used quota for a company.
     """
     # Optional: Check if the company_id, company_api_key exists
-    if not company_api_key:
-        raise HTTPException(
-            status_code=400, detail='Company API key header is required'
+
+    if not company.total_usage_quota and not company.used_quota:
+        err = dict()
+        err['detail'] = 'Company quota is invalid'
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content=err,
         )
-    company = (
-        db.query(Company).filter(Company.company_api_key == company_api_key).first()
-    )
-
-    if not company:
-        raise HTTPException(status_code=404, detail='Company not found')
-
     # Update the fields if they are provided in the request body
 
     if quota_update.used_quota is not None:
         if quota_update.file_txn_type == 1:
-            setattr(company, 'used_quota', company.used_quota + quota_update.used_quota)
+            setattr(
+                company,
+                'used_quota',
+                int(str(company.used_quota)) + quota_update.used_quota,
+            )
         else:
-            setattr(company, 'used_quota', company.used_quota - quota_update.used_quota)
-
+            setattr(
+                company,
+                'used_quota',
+                quota_update.used_quota,
+            )
+    setattr(company, 'updated_at', datetime.now())
     db.commit()
     db.refresh(company)
 
     return company
 
 
-@router.post('/api/generate-link')
-async def generate_link(
-    request: Request,
-    token: str,
-    db: Session = Depends(get_db),
-):
-    if not token:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail='Should be an authenticated request.',
-            headers={'WWW-Authenticate': 'bearer'},
-        )
+def is_s3_folder_empty(bucket_name: str, folder_prefix: str, s3: S3Client) -> bool:
+    """
+    Checks if an S3 "folder" (prefix) contains no files.
 
-    # Generate a new token
-    new_token = URLSafeTimedSerializer(SECRET_KEY, str(uuid.uuid4())).dumps(
-        str(uuid.uuid1()), salt=str(uuid.uuid1())
+    Args:
+        bucket_name: The name of the S3 bucket.
+        folder_prefix: The prefix representing the S3 "folder".
+                       It should typically end with a '/'.
+
+    Returns:
+        True if the folder is empty, False otherwise.
+    """
+
+    # Ensure the prefix ends with a '/' for consistent "folder" behavior
+    if not folder_prefix.endswith('/'):
+        folder_prefix += '/'
+
+    response = s3.list_objects_v2(
+        Bucket=bucket_name,
+        Prefix=folder_prefix,
+        MaxKeys=1,  # We only need to know if there's at least one object
     )
-    expires_at = datetime.now() + timedelta(minutes=15)
-    # Create a new RegistrationToken entry in the database
-    db_token = RegistrationToken(
-        token=new_token,
-        expires_at=expires_at,
-    )
-    db.add(db_token)
-    db.commit()
 
-    link = f'{request.base_url}companies/register?token={new_token}'
-    return {'message': 'Link generated successfully!', 'link': link}
+    # If 'Contents' is not in the response, or if it's empty, the folder is considered empty.
+    # Note: S3 console creates zero-byte objects for "folders", but direct object creation
+    # doesn't always create these. Checking for 'Contents' is the reliable way to find actual files.
+    return 'Contents' not in response
 
 
-async def register_company(
-    request: Request,
-    company_data: CompanyRegister,
-    token: str,
-    db: Session,
+def delete_s3_folder_contents(
+    s3_client: S3Client, bucket_name: str, folder_prefix: str
 ):
     """
-    Registers a new company.
-    The company_api_key, start_date, and end_date are auto-generated.
-    - **company_name**: Name of the company (must be unique).
+    Deletes all objects under a specified prefix (folder) in an S3 bucket.
+
+    Args:
+        bucket_name (str): The name of the S3 bucket.
+        folder_prefix (str): The prefix representing the folder to delete contents from.
+                             Ensure it ends with a '/' to target only objects within the "folder".
     """
-    # Check if token is still valid
-    validated_token = (
-        db.query(RegistrationToken)
-        .filter(
-            and_(
-                RegistrationToken.token == token,
-                RegistrationToken.expires_at > datetime.now(),
-                RegistrationToken.company_id.is_(None),
+    # Ensure the folder prefix ends with a slash
+    if not folder_prefix.endswith('/'):
+        folder_prefix += '/'
+
+    # Paginate through the objects and create the list using a list comprehension
+    paginator = s3_client.get_paginator('list_objects_v2')
+    pages = paginator.paginate(Bucket=bucket_name, Prefix=folder_prefix)
+
+    for page in pages:
+        if 'Contents' in page:
+            objects_to_delete = [{'Key': obj['Key']} for obj in page['Contents']]  # type: ignore
+            s3_client.delete_objects(
+                Bucket=bucket_name,
+                Delete={'Objects': objects_to_delete},  # type: ignore
             )
-        )
-        .first()
-    )
-    if not validated_token:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail='Not a valid registration link',
-        )
-    # 1. Check for existing company name
-    company_name_slug = slugify(company_data.company_name)
-    existing_company_name = (
-        db.query(Company)
-        .filter(
-            or_(
-                Company.company_name == company_data.company_name,
-                Company.company_slug == company_name_slug,
-            )
-        )
-        .first()
-    )
-    if existing_company_name:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT, detail='Company name already exists'
-        )
+            print(f'Deleted {len(objects_to_delete)} objects.')
 
-    # 2. Autogenerate a unique API key
-    token_chars = string.ascii_letters + string.digits
-    api_key_suffix = ''.join(secrets.choice(token_chars) for _ in range(32))
-    generated_api_key = f'shbkp_{api_key_suffix}'
-
-    # 3. Check for uniqueness of the generated API key (extremely unlikely, but good practice)
-    existing_api_key = (
-        db.query(Company)
-        .filter(
-            Company.company_api_key == generated_api_key,
-        )
-        .first()
-    )
-    if existing_api_key:
-        # In a real app, you might want to retry generation
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail='Could not generate a unique API key. Please try again.',
-        )
-
-    # 4. Set the start and end dates
-    today = date.today()
-    start_date = today
-    end_date = today + timedelta(days=365)  # A simple way to get a year from today
-
-    # 5. Generate a unique ID
-    company_id = str(uuid.uuid4())
-    base_url_config = request.base_url
-
-    # 6. Create an instance of the ORM model from the Pydantic data
-    db_company = Company(
-        id=company_id,
-        company_slug=company_name_slug,
-        company_api_key=generated_api_key,
-        start_date=start_date,
-        end_date=end_date,
-        base_url=base_url_config,
-        **company_data.model_dump(),
+    print(
+        f"All objects under '{folder_prefix}' have been deleted from '{bucket_name}'."
     )
 
-    # 7. Add and commit to the database
-    db.add(db_company)
-    db.flush()
-    db.refresh(db_company)
-    setattr(validated_token, 'company_id', db_company.id)
-    db.add(validated_token)
-    db.commit()
-    db.refresh(validated_token)
 
-    return {
-        'company_api_key': db_company.company_api_key,
-        'api_base_url': db_company.base_url,
-    }
-
-
-@router.post(
-    '/api/register',
-    response_model=CompanyOut,
-    status_code=status.HTTP_201_CREATED,
-)
-async def handleRegistration(
-    request: Request,
-    background_tasks: BackgroundTasks,
-    token: str = Form(),
-    companyName: str = Form(max_length=65),
-    db: Session = Depends(get_db),
+@router.post('/delete/files')
+async def delete_files(
+    request: FileDeleteRequest,
+    company: CompanyOut = Depends(get_company_by_api_key),
+    s3_client=Depends(get_s3_client),
 ):
     """
-    Registers a new company and downloads a file that can be shared
+    Deletes files from S3.
     """
-    get_quota_config = db.query(UploaderConfig).filter_by(is_active=True).first()
-    if not get_quota_config:
-        raise HTTPException(
+    try:
+        if not company:
+            err = dict()
+            err['detail'] = 'Company not found'
+            return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content=err)
+        is_folder_empty = is_s3_folder_empty(
+            str(company.aws_bucket_name),
+            f'{company.company_slug}/{request.loc_tag}',
+            s3_client,
+        )
+        if is_folder_empty:
+            err = dict()
+            err['detail'] = 'Folder is empty'
+            return JSONResponse(status_code=status.HTTP_406_NOT_ACCEPTABLE, content=err)
+        delete_s3_folder_contents(
+            s3_client,
+            str(company.aws_bucket_name),
+            f'{company.company_slug}/{request.loc_tag}',
+        )
+        return Response(
+            status_code=status.HTTP_200_OK, content='Files deleted successfully'
+        )
+    except Exception:
+        err = dict()
+        err['detail'] = 'Something Went Wrong'
+        return JSONResponse(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail='No active uploader configuration found.',
+            content=err,
         )
-    s3_client = client(
-        's3',
-        aws_access_key_id=get_quota_config.aws_access_key,
-        aws_secret_access_key=get_quota_config.aws_secret_key,
-        region_name=get_quota_config.aws_bucket_region,
-    )
-    total_content_size = get_bucket_size(
-        s3_client=s3_client, bucket_name=get_quota_config.aws_bucket_name
-    )
-    if total_content_size is None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail='Please check for the correct configuration',
-        )
-    company_to_register = CompanyRegister(
-        company_name=companyName,
-        aws_access_key=str(get_quota_config.aws_access_key),
-        aws_secret_key=str(get_quota_config.aws_secret_key),
-        aws_bucket_name=str(get_quota_config.aws_bucket_name),
-        aws_bucket_region=str(get_quota_config.aws_bucket_region),
-    )
-    # Register the company using the API logic
-    registered_company = await register_company(
-        request=request, company_data=company_to_register, db=db, token=token
-    )
-    downloadable_key = get_api_key_file(
-        company_api_key=str(registered_company.get('company_api_key')),
-        base_url=str(registered_company.get('api_base_url')),
-        background_tasks=background_tasks,
-    )
-    return downloadable_key
 
 
-@router.post('/generate-presigned-url/')
+@router.post('/generate/presigned/url/upload')
 async def generate_presigned_upload_url(
     request: PresignedURLRequest,
-    s3_client,
-    company_api_key: Annotated[str | None, Header(convert_underscores=False)],
-    db: Session = Depends(get_db),
+    company: CompanyOut = Depends(get_company_by_api_key),
+    s3_client: S3Client = Depends(get_s3_client),
 ):
     """
     Generates a presigned URL for uploading a file to S3.
     """
+    if not company:
+        return Response(status_code=status.HTTP_400_BAD_REQUEST)
+    filetype, _ = mimetypes.guess_type(request.file_name)
     try:
-        found_company: Company = await find_company_by_api_key(
-            company_api_key=company_api_key, db=db
+        s3_client.head_object(
+            Bucket=str(company.aws_bucket_name),
+            Key=f'{company.company_slug}/{request.loc_tag}/{request.file_name}',
         )
-        response = s3_client.generate_presigned_post(
-            Bucket=found_company.aws_bucket_name,
-            Key=request.file_name,
-            Fields={'Content-Type': request.content_type},
-            Conditions=[{'Content-Type': request.content_type}],
-            ExpiresIn=3600,  # URL expires in 1 hour (3600 seconds)
+        logger.info(f'File found - {request.file_name}')
+        error = dict()
+        error['detail'] = f'File found - {request.file_name}'
+        return JSONResponse(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            content=error,
         )
-        return response
+    except ClientError:
+        logger.info(f'File not found - {request.file_name}')
+        pass
+    try:
+        return s3_client.generate_presigned_post(
+            Bucket=str(company.aws_bucket_name),
+            Key=f'{company.company_slug}/{request.loc_tag}/{request.file_name}',
+            Fields={'Content-Type': filetype},
+            Conditions=[
+                {'Content-Type': filetype},
+                ['content-length-range', 1024, request.content_size],
+            ],
+            ExpiresIn=3600,
+        )
+
     except ClientError as e:
-        raise HTTPException(
+        return HTTPException(
             status_code=500, detail=f'Error generating presigned URL: {e}'
         )
 
 
-@router.get('/generate-presigned-download-url/{object_key}')
+@router.get('/generate/presigned/url/download')
 async def generate_presigned_download_url(
-    object_key: str, s3_client, company_api_key, db: Session = Depends(get_db)
+    request: Request,
+    company: CompanyOut = Depends(get_company_by_api_key),
+    s3_client: S3Client = Depends(get_s3_client),
 ):
     """
     Generates a presigned URL for downloading a file from S3.
     """
     try:
-        found_company = await find_company_by_api_key(
-            company_api_key=company_api_key, db=db
-        )
+        object_key = request.path_params.get('object_key')
         url = s3_client.generate_presigned_url(
             ClientMethod='get_object',
-            Params={'Bucket': found_company.aws_bucket_name, 'Key': object_key},
-            ExpiresIn=3600,  # URL expires in 1 hour (3600 seconds)
+            Params={'Bucket': company.aws_bucket_name, 'Key': object_key},
+            ExpiresIn=3600,
         )
         return {'url': url}
     except ClientError as e:
