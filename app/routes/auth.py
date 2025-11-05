@@ -1,8 +1,17 @@
+import hashlib
+
 from fastapi import APIRouter, Depends, Form, status
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
-from app.schemas import AdminClientRequest, AdminClientResponse
+from app.schemas import (
+    AdminClientRequest,
+    AdminClientResponse,
+    HashData,
+    HashResult,
+    VerifyData,
+    VerifyResult,
+)
 from app.shbkp import (
     authenticate_client,
     create_access_token,
@@ -81,3 +90,42 @@ def validate_token(token: str = Depends(oauth2_scheme), db: Session = Depends(ge
         client_id=str(client_id), message='Token is valid'
     )
     return is_validated
+
+
+@router.post(
+    '/encode/sha256', response_model=HashResult, summary='Encode string to SHA-256 Hash'
+)
+def encode_sha256(data: HashData):
+    """
+    Computes the SHA-256 hash of the provided string.
+    """
+    # 1. Encode the string to bytes (required by hashlib)
+    data_bytes = data.data.encode('utf-8')
+
+    # 2. Compute the SHA-256 hash
+    sha256_hash = hashlib.sha256(data_bytes).hexdigest()
+
+    return HashResult(original_data=data.data, sha256_hash=sha256_hash)
+
+
+@router.post(
+    '/decode/sha256/verify',
+    response_model=VerifyResult,
+    summary='Verify string against a known SHA-256 Hash',
+)
+def verify_sha256(verification_data: VerifyData):
+    """
+    Verifies if the provided string produces the given SHA-256 hash.
+    SHA-256 is one-way, so we can only check for a match.
+    """
+
+    # 1. Compute the hash of the input data
+    input_hash = hashlib.sha256(verification_data.data.encode('utf-8')).hexdigest()
+
+    # 2. Compare the computed hash with the known hash
+    # Use hmac.compare_digest for constant-time comparison to mitigate timing attacks
+    match = hashlib.sha256(input_hash, verification_data.known_hash)
+
+    status = 'Match' if match else 'No Match'
+
+    return VerifyResult(match=match, status=status)

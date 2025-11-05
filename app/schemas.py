@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -18,6 +19,7 @@ class CompanyBase(BaseModel):
 
 class CompanyRegister(BaseModel):
     company_name: str = Field(..., description='Name of the company.')
+    company_key_prefix: str
 
 
 class CompanyOut(CompanyBase):
@@ -104,3 +106,24 @@ class AdminClientRequest(BaseModel):
 class AdminClientResponse(BaseModel):
     client_id: str
     message: str | None = None
+
+
+class HashData(BaseModel):
+    data: str
+
+
+class HashResult(BaseModel):
+    original_data: str
+    sha256_hash: str
+
+
+# Pydantic model for verification input
+class VerifyData(BaseModel):
+    data: str
+    known_hash: str
+
+
+# Pydantic model for the verification result
+class VerifyResult(BaseModel):
+    match: bool
+    status: Literal['Match', 'No Match']

@@ -66,7 +66,7 @@ async def register_company(
         err = dict()
         err['detail'] = 'Company already exists'
         return JSONResponse(status_code=status.HTTP_409_CONFLICT, content=err)
-    company_api_key = f'shbkp_{hash_secret(str(uuid.uuid4()).replace("-", ""))}'
+    company_api_key = f'{registration_request.company_key_prefix}_{hash_secret(str(uuid.uuid4()).replace("-", ""))}'
     current_date = datetime.now()
     end_date = current_date + relativedelta(years=1)
     found_aws_config = (
