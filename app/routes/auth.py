@@ -1,4 +1,5 @@
 import hashlib
+import hmac
 
 from fastapi import APIRouter, Depends, Form, status
 from fastapi.responses import JSONResponse
@@ -124,7 +125,7 @@ def verify_sha256(verification_data: VerifyData):
 
     # 2. Compare the computed hash with the known hash
     # Use hmac.compare_digest for constant-time comparison to mitigate timing attacks
-    match = hashlib.sha256(input_hash, verification_data.known_hash)
+    match = hmac.compare_digest(input_hash, verification_data.known_hash)
 
     status = 'Match' if match else 'No Match'
 
