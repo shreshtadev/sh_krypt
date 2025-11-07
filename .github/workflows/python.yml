@@ -1,0 +1,66 @@
+name: Deploy FastAPI to Cloud
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version-file: ".python-version"
+
+      - name: Install uv
+        run: pip install uv
+
+      - name: Sync dependencies
+        run: uv sync --frozen
+
+      # - name: Run tests
+      #   run: uv run pytest
+
+      - name: Deploy to AWS Lightsail
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.LIGHTSAIL_HOST }}
+          username: ${{ secrets.LIGHTSAIL_USER }}
+          key: ${{ secrets.LIGHTSAIL_SSH_KEY }}
+          script: |
+            DEPLOY_DIR=/home/${{ secrets.LIGHTSAIL_USER }}/sh_krypt
+            PRIVKEY_DIR=$DEPLOY_DIR/privkeys
+
+            if [ ! -d "$DEPLOY_DIR" ]; then
+              echo "First-time deploy: cloning repo..."
+              git clone https://github.com/shreshtadev/sh_krypt.git "$DEPLOY_DIR"
+              
+              cd "$DEPLOY_DIR"
+
+              # Create privkeys folder
+              mkdir -p "$PRIVKEY_DIR"
+
+              # Generate RSA key pair inside privkeys
+              openssl genrsa -out "$PRIVKEY_DIR/private.pem" 4096
+              openssl rsa -in "$PRIVKEY_DIR/private.pem" -pubout -out "$PRIVKEY_DIR/public.pem"
+
+              # Restrict private key permissions
+              chmod 600 "$PRIVKEY_DIR/private.pem"
+            else
+              echo "Updating existing deployment..."
+              cd "$DEPLOY_DIR"
+              git fetch --all
+              git reset --hard origin/main
+            fi
+
+            # Sync dependencies
+            uv sync --frozen
+
+            # Restart FastAPI service
+            sudo systemctl restart sh_krypt.service
