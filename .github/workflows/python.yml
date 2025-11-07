@@ -26,13 +26,17 @@ jobs:
 
       # - name: Run tests
       #   run: uv run pytest
+      - name: Write SSH Key
+        run: |
+          echo "${{secrets.LIGHTSAIL_SSH_KEY}}" > key.pem
+          chmod 600 key.pem
 
       - name: Deploy to AWS Lightsail
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.LIGHTSAIL_HOST }}
           username: ${{ secrets.LIGHTSAIL_USER }}
-          key: ${{ secrets.LIGHTSAIL_SSH_KEY }}
+          key_path: key.pem
           script: |
             DEPLOY_DIR=/home/${{ secrets.LIGHTSAIL_USER }}/sh_krypt
             PRIVKEY_DIR=$DEPLOY_DIR/privkeys
