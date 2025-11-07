@@ -28,15 +28,16 @@ jobs:
       #   run: uv run pytest
       - name: Write SSH Key
         run: |
-          echo "${{ secrets.LIGHTSAIL_SSH_KEY_B64 }}" | base64 -d > key.pem
-          chmod 600 key.pem
+          mkdir -p "$GITHUB_WORKSPACE"
+          echo "${{ secrets.LIGHTSAIL_SSH_KEY_B64 }}" | base64 --decode > "$GITHUB_WORKSPACE/key.pem"
+          chmod 600 "$GITHUB_WORKSPACE/key.pem"
 
       - name: Deploy to AWS Lightsail
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.LIGHTSAIL_HOST }}
           username: ${{ secrets.LIGHTSAIL_USER }}
-          key_path: key.pem
+          key_path: ${{ github.workspace }}/key.pem
           script: |
             DEPLOY_DIR=/home/${{ secrets.LIGHTSAIL_USER }}/sh_krypt
             PRIVKEY_DIR=$DEPLOY_DIR/privkeys
